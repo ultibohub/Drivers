@@ -53,7 +53,7 @@ interface
 
 uses GlobalConfig,GlobalConst,GlobalTypes,Platform,Threads,Devices,USB,Mouse,SysUtils;
 
-{$DEFINE USBIRTOUCH_DEBUG}
+{--$DEFINE USBIRTOUCH_DEBUG}
 
 {==============================================================================}
 const
@@ -61,6 +61,9 @@ const
  USBIRTOUCH_DRIVER_NAME = 'USB IR Touch Driver'; {Name of USB IR Touch driver}
 
  USBIRTOUCH_MOUSE_DESCRIPTION = 'USB IR Touch'; {Description of USB IR Touch device}
+ 
+ USBIRTOUCH_MAX_X = $7FFF;
+ USBIRTOUCH_MAX_Y = $7FFF;
  
  USBIRTOUCH_BUTTON1 = (1 shl 0); {Button 1 Primary/trigger, Value = 0 to 1 (MOUSE_LEFT_BUTTON)}
  USBIRTOUCH_BUTTON2 = (1 shl 1); {Button 2 Secondary, Value = 0 to 1 (MOUSE_RIGHT_BUTTON)}
@@ -348,6 +351,34 @@ begin
      MOUSE_CONTROL_SET_SAMPLE_RATE:begin
        {Set Sample Rate}
        Mouse.MouseRate:=Argument1;
+       
+       {Return Result}
+       Result:=ERROR_SUCCESS;
+      end;       
+     MOUSE_CONTROL_GET_MAX_X:begin
+       {Get Maximum X}
+       Argument2:=USBIRTOUCH_MAX_X;
+       
+       {Return Result}
+       Result:=ERROR_SUCCESS;
+      end;       
+     MOUSE_CONTROL_GET_MAX_Y:begin
+       {Get Maximum Y}
+       Argument2:=USBIRTOUCH_MAX_Y;
+       
+       {Return Result}
+       Result:=ERROR_SUCCESS;
+      end;       
+     MOUSE_CONTROL_GET_MAX_WHEEL:begin
+       {Get Maximum Wheel}
+       Argument2:=0;
+       
+       {Return Result}
+       Result:=ERROR_SUCCESS;
+      end;       
+     MOUSE_CONTROL_GET_MAX_BUTTONS:begin
+       {Get Maximum Buttons mask}
+       Argument2:=MOUSE_LEFT_BUTTON or MOUSE_RIGHT_BUTTON or MOUSE_MIDDLE_BUTTON or MOUSE_ABSOLUTE_X or MOUSE_ABSOLUTE_Y;
        
        {Return Result}
        Result:=ERROR_SUCCESS;
@@ -713,7 +744,8 @@ begin
           if Request.ActualSize >= SizeOf(TUSBIRTouchInputReport) then
            begin
             {Get Buttons}
-            Data.Buttons:=0;
+            Data.Buttons:=MOUSE_ABSOLUTE_X or MOUSE_ABSOLUTE_Y;
+            
             {Check Button1}
             if (Report.MousePointerButtons and USBIRTOUCH_BUTTON1) <> 0 then
              begin
@@ -727,6 +759,7 @@ begin
                 Data.Buttons:=Data.Buttons or MOUSE_RIGHT_BUTTON;
                end;
              end;
+            
             {Check Button2} 
             if (Report.MousePointerButtons and USBIRTOUCH_BUTTON2) <> 0 then
              begin
@@ -740,16 +773,23 @@ begin
                 Data.Buttons:=Data.Buttons or MOUSE_LEFT_BUTTON;
                end;
              end; 
+            
+            {Check Button3} 
             if (Report.MousePointerButtons and USBIRTOUCH_BUTTON3) <> 0 then Data.Buttons:=Data.Buttons or MOUSE_MIDDLE_BUTTON;
             
             {Get X offset}
-            Data.OffsetX:=Report.MousePointerX; //To Do //This may be an absolute value, see MOUSE_ABSOLUTE_X
+            Data.OffsetX:=Report.MousePointerX;
     
             {Get Y offset}
-            Data.OffsetY:=Report.MousePointerY; //To Do //This may be an absolute value, see MOUSE_ABSOLUTE_Y
+            Data.OffsetY:=Report.MousePointerY;
     
             {Get Wheel offset}
             Data.OffsetWheel:=0;
+            
+            {Maximum X, Y and Wheel}
+            Data.MaximumX:=USBIRTOUCH_MAX_X;
+            Data.MaximumY:=USBIRTOUCH_MAX_Y;
+            Data.MaximumWheel:=0;
             
             {Insert Data}
             MouseInsertData(@Mouse.Mouse,@Data,True);
