@@ -1,7 +1,7 @@
 {
 Ultibo USB HID IR Touch Screen Driver.
 
-Copyright (C) 2018 - SoftOz Pty Ltd.
+Copyright (C) 2019 - SoftOz Pty Ltd.
 
 Arch
 ====
@@ -35,7 +35,7 @@ References
    http://www.usb.org/developers/hidpage/Hut1_12v2.pdf
  
 USB HID IR Touch Screen
-========================
+=======================
 
  This unit provides an experimental USB HID mouse driver for device AAEC:0922 Infrared Multi Touch Screen Product.
 
@@ -91,17 +91,24 @@ type
  TUSBIRTouchDevice = record
   {Mouse Properties}
   Mouse:TMouseDevice;
+  {Driver Properties}
+  Rotation:LongWord;                     {Mouse rotation (eg MOUSE_ROTATION_90)}
+  MaxX:LongWord;                         {Mouse maximum X value}
+  MaxY:LongWord;                         {Mouse maximum Y value} 
   {USB Properties}
   HIDInterface:PUSBInterface;            {USB IR Touch Interface}
   ReportRequest:PUSBRequest;             {USB request for mouse report data}
   ReportEndpoint:PUSBEndpointDescriptor; {USB Mouse Interrupt IN Endpoint}
+  HIDDescriptor:PUSBHIDDescriptor;       {USB HID Descriptor for mouse} 
+  ReportDescriptor:Pointer;              {USB HID Report Descriptor for mouse}
   PendingCount:LongWord;                 {Number of USB requests pending for this mouse}
   WaiterThread:TThreadId;                {Thread waiting for pending requests to complete (for mouse detachment)}
  end;
   
 {==============================================================================}
-{var}
+var
  {USB IR Touch specific variables}
+ USBIRTOUCH_ROTATION:LongWord;
  
 {==============================================================================}
 {Initialization Functions}
@@ -124,6 +131,9 @@ function USBIRTouchCheckDevice(Device:PUSBDevice):LongWord;
 
 function USBIRTouchDeviceSetProtocol(Mouse:PUSBIRTouchDevice;Protocol:Byte):LongWord;
 
+function USBIRTouchDeviceGetHIDDescriptor(Mouse:PUSBIRTouchDevice;Descriptor:PUSBHIDDescriptor):LongWord;
+function USBIRTouchDeviceGetReportDescriptor(Mouse:PUSBIRTouchDevice;Descriptor:Pointer;Size:LongWord):LongWord;
+
 {==============================================================================}
 {==============================================================================}
 
@@ -139,6 +149,11 @@ var
 
 {==============================================================================}
 {==============================================================================}
+{Forward Declarations}
+function USBIRTouchResolveRotation(ARotation:LongWord):LongWord; forward;
+ 
+{==============================================================================}
+{==============================================================================}
 {Initialization Functions}
 procedure USBIRTouchInit;
 {Initialize the USB IR Touch driver}
@@ -146,11 +161,21 @@ procedure USBIRTouchInit;
 {Note: Called only during system startup}
 var
  Status:LongWord;
+ WorkInt:LongWord;
 begin
  {}
  {Check Initialized}
  if USBIRTouchInitialized then Exit;
 
+ {Check Environment Variables}
+ {USBIRTOUCH_ROTATION}
+ WorkInt:=USBIRTouchResolveRotation(StrToIntDef(SysUtils.GetEnvironmentVariable('USBIRTOUCH_ROTATION'),0));
+ case WorkInt of
+  MOUSE_ROTATION_0,MOUSE_ROTATION_90,MOUSE_ROTATION_180,MOUSE_ROTATION_270:begin
+    USBIRTOUCH_ROTATION:=WorkInt;
+   end;
+ end;
+ 
  {Create USB IR Touch Driver}
  USBIRTouchDriver:=USBDriverCreate;
  if USBIRTouchDriver <> nil then
@@ -357,14 +382,14 @@ begin
       end;       
      MOUSE_CONTROL_GET_MAX_X:begin
        {Get Maximum X}
-       Argument2:=USBIRTOUCH_MAX_X;
+       Argument2:=PUSBIRTouchDevice(Mouse).MaxX;
        
        {Return Result}
        Result:=ERROR_SUCCESS;
       end;       
      MOUSE_CONTROL_GET_MAX_Y:begin
        {Get Maximum Y}
-       Argument2:=USBIRTOUCH_MAX_Y;
+       Argument2:=PUSBIRTouchDevice(Mouse).MaxY;
        
        {Return Result}
        Result:=ERROR_SUCCESS;
@@ -383,6 +408,29 @@ begin
        {Return Result}
        Result:=ERROR_SUCCESS;
       end;       
+     MOUSE_CONTROL_GET_ROTATION:begin
+       {Get Rotation}
+       Argument2:=PUSBIRTouchDevice(Mouse).Rotation;
+       
+       {Return Result}
+       Result:=ERROR_SUCCESS;
+      end;
+     MOUSE_CONTROL_SET_ROTATION:begin
+       {Set Rotation}
+       case USBIRTouchResolveRotation(Argument1) of
+        MOUSE_ROTATION_0,MOUSE_ROTATION_90,MOUSE_ROTATION_180,MOUSE_ROTATION_270:begin
+          PUSBIRTouchDevice(Mouse).Rotation:=Argument1;
+         end;
+        else
+         begin
+          Result:=ERROR_INVALID_PARAMETER;
+          Exit;
+         end;
+       end;
+       
+       {Return Result}
+       Result:=ERROR_SUCCESS;
+      end;
     end;
    finally
     {Release the Lock}
@@ -486,6 +534,9 @@ begin
  Mouse.Mouse.DeviceRead:=USBIRTouchDeviceRead;
  Mouse.Mouse.DeviceControl:=USBIRTouchDeviceControl;
  {Driver}
+ Mouse.Rotation:=USBIRTOUCH_ROTATION;
+ Mouse.MaxX:=USBIRTOUCH_MAX_X;
+ Mouse.MaxY:=USBIRTOUCH_MAX_Y;
  {USB}
  Mouse.HIDInterface:=Interrface;
  Mouse.ReportEndpoint:=ReportEndpoint;
@@ -521,6 +572,47 @@ begin
    Exit;
   end;
  
+ {$IFDEF USB_DEBUG}
+ if USB_LOG_ENABLED then USBLogDebug(Device,'USB IR Touch: Reading HID report descriptors');
+ {$ENDIF}
+ 
+ {Get HID Descriptor}
+ Mouse.HIDDescriptor:=USBBufferAllocate(Device,SizeOf(TUSBHIDDescriptor));
+ if Mouse.HIDDescriptor <> nil then
+  begin 
+   Status:=USBIRTouchDeviceGetHIDDescriptor(Mouse,Mouse.HIDDescriptor);
+   if Status <> USB_STATUS_SUCCESS then
+    begin
+     if USB_LOG_ENABLED then USBLogError(Device,'USB IR Touch: Failed to read HID descriptor: ' + USBStatusToString(Status));
+     
+     {Don't fail the bind}
+    end
+   else 
+    begin
+     if (Mouse.HIDDescriptor.bDescriptorType = USB_HID_DESCRIPTOR_TYPE_HID) and (Mouse.HIDDescriptor.bHIDDescriptorType = USB_HID_DESCRIPTOR_TYPE_REPORT) then
+      begin
+       {Get Report Descriptor}
+       Mouse.ReportDescriptor:=USBBufferAllocate(Device,Mouse.HIDDescriptor.wHIDDescriptorLength); 
+       if Mouse.ReportDescriptor <> nil then
+        begin
+         Status:=USBIRTouchDeviceGetReportDescriptor(Mouse,Mouse.ReportDescriptor,Mouse.HIDDescriptor.wHIDDescriptorLength);
+         if Status <> USB_STATUS_SUCCESS then
+          begin
+           if USB_LOG_ENABLED then USBLogError(Device,'USB IR Touch: Failed to read HID report descriptor: ' + USBStatusToString(Status));
+           
+           {Don't fail the bind}
+         {$IFDEF USB_DEBUG}
+          end
+         else
+          begin
+           if USB_LOG_ENABLED then USBLogDebug(Device,'USB IR Touch: Read ' + IntToStr(Mouse.HIDDescriptor.wHIDDescriptorLength) + ' byte HID report descriptor');
+         {$ENDIF}  
+          end;
+        end;
+      end;
+    end;
+  end;  
+ 
  {$IFDEF USBIRTOUCH_DEBUG}
  if USB_LOG_ENABLED then USBLogDebug(Device,'USB IR Touch: Enabling HID report protocol');
  {$ENDIF}
@@ -533,6 +625,12 @@ begin
 
    {Release Report Request}
    USBRequestRelease(Mouse.ReportRequest);
+   
+   {Release HID Descriptor}
+   USBBufferRelease(Mouse.HIDDescriptor);
+ 
+   {Release Report Descriptor}
+   USBBufferRelease(Mouse.ReportDescriptor);
    
    {Deregister Mouse}
    MouseDeviceDeregister(@Mouse.Mouse);
@@ -585,6 +683,12 @@ begin
    
    {Release Report Request}
    USBRequestRelease(Mouse.ReportRequest);
+
+   {Release HID Descriptor}
+   USBBufferRelease(Mouse.HIDDescriptor);
+ 
+   {Release Report Descriptor}
+   USBBufferRelease(Mouse.ReportDescriptor);
    
    {Deregister Mouse}
    MouseDeviceDeregister(@Mouse.Mouse);
@@ -679,6 +783,12 @@ begin
  {Release Report Request}
  USBRequestRelease(Mouse.ReportRequest);
 
+ {Release HID Descriptor}
+ USBBufferRelease(Mouse.HIDDescriptor);
+ 
+ {Release Report Descriptor}
+ USBBufferRelease(Mouse.ReportDescriptor);
+ 
  {Deregister Mouse}
  if MouseDeviceDeregister(@Mouse.Mouse) <> ERROR_SUCCESS then Exit;
  
@@ -777,18 +887,36 @@ begin
             {Check Button3} 
             if (Report.MousePointerButtons and USBIRTOUCH_BUTTON3) <> 0 then Data.Buttons:=Data.Buttons or MOUSE_MIDDLE_BUTTON;
             
-            {Get X offset}
-            Data.OffsetX:=Report.MousePointerX;
-    
-            {Get Y offset}
-            Data.OffsetY:=Report.MousePointerY;
-    
+            {Check Rotation}
+            case Mouse.Rotation of
+             MOUSE_ROTATION_0:begin
+               {Get X and Y offset}
+               Data.OffsetX:=Report.MousePointerX;
+               Data.OffsetY:=Report.MousePointerY;
+              end;
+             MOUSE_ROTATION_90:begin
+               {Swap X and Y offset}
+               Data.OffsetX:=Report.MousePointerY;
+               Data.OffsetY:=Report.MousePointerX;
+              end;
+             MOUSE_ROTATION_180:begin
+               {Invert X and Y}
+               Data.OffsetX:=Mouse.MaxX - Report.MousePointerX;
+               Data.OffsetY:=Mouse.MaxY - Report.MousePointerY;
+              end;
+             MOUSE_ROTATION_270:begin
+               {Swap and Invert X and Y}
+               Data.OffsetX:=Mouse.MaxY - Report.MousePointerY;
+               Data.OffsetY:=Mouse.MaxX - Report.MousePointerX;
+              end;
+            end;
+            
             {Get Wheel offset}
             Data.OffsetWheel:=0;
             
             {Maximum X, Y and Wheel}
-            Data.MaximumX:=USBIRTOUCH_MAX_X;
-            Data.MaximumY:=USBIRTOUCH_MAX_Y;
+            Data.MaximumX:=Mouse.MaxX;
+            Data.MaximumY:=Mouse.MaxY;
             Data.MaximumWheel:=0;
             
             {Insert Data}
@@ -937,6 +1065,81 @@ begin
  
  {Set Protocol}
  Result:=USBControlRequest(Device,nil,USB_HID_REQUEST_SET_PROTOCOL,USB_BMREQUESTTYPE_TYPE_CLASS or USB_BMREQUESTTYPE_DIR_OUT or USB_BMREQUESTTYPE_RECIPIENT_INTERFACE,Protocol,Mouse.HIDInterface.Descriptor.bInterfaceNumber,nil,0);
+end;
+
+{==============================================================================}
+
+function USBIRTouchDeviceGetHIDDescriptor(Mouse:PUSBIRTouchDevice;Descriptor:PUSBHIDDescriptor):LongWord;
+{Get the HID Descriptor for a USB IR Touch device}
+{Mouse: The USB IR Touch device to get the descriptor for}
+{Descriptor: Pointer to a USB HID Descriptor structure for the returned data}
+{Return: USB_STATUS_SUCCESS if completed or another USB error code on failure}
+var
+ Device:PUSBDevice;
+begin
+ {}
+ Result:=USB_STATUS_INVALID_PARAMETER;
+ 
+ {Check Mouse}
+ if Mouse = nil then Exit;
+ 
+ {Check Descriptor}
+ if Descriptor = nil then Exit;
+ 
+ {Check Interface}
+ if Mouse.HIDInterface = nil then Exit;
+ 
+ {Get Device}
+ Device:=PUSBDevice(Mouse.Mouse.Device.DeviceData);
+ if Device = nil then Exit;
+ 
+ {Get Descriptor}
+ Result:=USBControlRequest(Device,nil,USB_DEVICE_REQUEST_GET_DESCRIPTOR,USB_BMREQUESTTYPE_TYPE_STANDARD or USB_BMREQUESTTYPE_DIR_IN or USB_BMREQUESTTYPE_RECIPIENT_INTERFACE,(USB_HID_DESCRIPTOR_TYPE_HID shl 8),Mouse.HIDInterface.Descriptor.bInterfaceNumber,Descriptor,SizeOf(TUSBHIDDescriptor));
+end;
+
+{==============================================================================}
+
+function USBIRTouchDeviceGetReportDescriptor(Mouse:PUSBIRTouchDevice;Descriptor:Pointer;Size:LongWord):LongWord;
+{Get the Report Descriptor for a USB IR Touch device}
+{Mouse: The USB IR Touch device to get the descriptor for}
+{Descriptor: Pointer to a buffer to return the USB Report Descriptor}
+{Size: The size in bytes of the buffer pointed to by Descriptor}
+{Return: USB_STATUS_SUCCESS if completed or another USB error code on failure}
+var
+ Device:PUSBDevice;
+begin
+ {}
+ Result:=USB_STATUS_INVALID_PARAMETER;
+ 
+ {Check Mouse}
+ if Mouse = nil then Exit;
+ 
+ {Check Descriptor}
+ if Descriptor = nil then Exit;
+ 
+ {Check Interface}
+ if Mouse.HIDInterface = nil then Exit;
+ 
+ {Get Device}
+ Device:=PUSBDevice(Mouse.Mouse.Device.DeviceData);
+ if Device = nil then Exit;
+ 
+ {Get Descriptor}
+ Result:=USBControlRequest(Device,nil,USB_DEVICE_REQUEST_GET_DESCRIPTOR,USB_BMREQUESTTYPE_TYPE_STANDARD or USB_BMREQUESTTYPE_DIR_IN or USB_BMREQUESTTYPE_RECIPIENT_INTERFACE,(USB_HID_DESCRIPTOR_TYPE_REPORT shl 8),Mouse.HIDInterface.Descriptor.bInterfaceNumber,Descriptor,Size);
+end;
+
+{==============================================================================}
+
+function USBIRTouchResolveRotation(ARotation:LongWord):LongWord; 
+begin
+ {}
+ case ARotation of
+  90:Result:=MOUSE_ROTATION_90;  
+  180:Result:=MOUSE_ROTATION_180;  
+  270:Result:=MOUSE_ROTATION_270;  
+  else
+   Result:=ARotation;  
+ end;
 end;
 
 {==============================================================================}
