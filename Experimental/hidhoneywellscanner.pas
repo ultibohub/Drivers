@@ -527,7 +527,7 @@ begin
    Exit;
   end;
 
- {Check for Mouse (Must be interface specific)}
+ {Check for Keyboard (Must be interface specific)}
  if Device.Descriptor.bDeviceClass <> USB_CLASS_CODE_INTERFACE_SPECIFIC then
   begin
    {Return Result}
@@ -650,36 +650,40 @@ begin
     end;
   end;  
  
- {$IFDEF USB_DEBUG}
- if USB_LOG_ENABLED then USBLogDebug(Device,'Keyboard: Enabling HID report protocol');
- {$ENDIF}
- 
- {Set Report Protocol}
- Status:=HIDKeyboardDeviceSetProtocol(Keyboard,USB_HID_PROTOCOL_REPORT);
- if Status <> USB_STATUS_SUCCESS then
+ {Check Interface (Only for HID boot sub class)}
+ if Interrface.Descriptor.bInterfaceSubClass = USB_HID_SUBCLASS_BOOT then
   begin
-   if USB_LOG_ENABLED then USBLogError(Device,'Keyboard: Failed to enable HID report protocol: ' + USBStatusToString(Status));
-   
-   {Release Report Request}
-   USBRequestRelease(Keyboard.ReportRequest);
-   
-   {Release HID Descriptor}
-   USBBufferRelease(Keyboard.HIDDescriptor);
+   {$IFDEF USB_DEBUG}
+   if USB_LOG_ENABLED then USBLogDebug(Device,'Keyboard: Enabling HID report protocol');
+   {$ENDIF}
  
-   {Release Report Descriptor}
-   USBBufferRelease(Keyboard.ReportDescriptor);
+   {Set Report Protocol}
+   Status:=HIDKeyboardDeviceSetProtocol(Keyboard,USB_HID_PROTOCOL_REPORT);
+   if Status <> USB_STATUS_SUCCESS then
+    begin
+     if USB_LOG_ENABLED then USBLogError(Device,'Keyboard: Failed to enable HID report protocol: ' + USBStatusToString(Status));
    
-   {Deregister Keyboard}
-   KeyboardDeviceDeregister(@Keyboard.Keyboard);
+     {Release Report Request}
+     USBRequestRelease(Keyboard.ReportRequest);
    
-   {Destroy Keyboard}
-   KeyboardDeviceDestroy(@Keyboard.Keyboard);
+     {Release HID Descriptor}
+     USBBufferRelease(Keyboard.HIDDescriptor);
+ 
+     {Release Report Descriptor}
+     USBBufferRelease(Keyboard.ReportDescriptor);
    
-   {Return Result}
-   Result:=USB_STATUS_DEVICE_UNSUPPORTED;
-   Exit;
+     {Deregister Keyboard}
+     KeyboardDeviceDeregister(@Keyboard.Keyboard);
+   
+     {Destroy Keyboard}
+     KeyboardDeviceDestroy(@Keyboard.Keyboard);
+   
+     {Return Result}
+     Result:=USB_STATUS_DEVICE_UNSUPPORTED;
+     Exit;
+    end;
   end;
-
+  
  {$IFDEF USB_DEBUG}
  if USB_LOG_ENABLED then USBLogDebug(Device,'Keyboard: Setting idle rate');
  {$ENDIF}
