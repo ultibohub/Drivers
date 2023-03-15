@@ -1,7 +1,7 @@
 {
 ASIX AX88XXX based USB 2.0 Ethernet Driver.
 
-Copyright (C) 2021 - SoftOz Pty Ltd.
+Copyright (C) 2023 - SoftOz Pty Ltd.
 
 Arch
 ====
@@ -598,7 +598,7 @@ begin
    
     try 
      {Allocate Receive Queue Buffer}
-     Network.ReceiveQueue.Buffer:=BufferCreate(SizeOf(TNetworkEntry),PAX88XXXNetwork(Network).ReceiveEntryCount);
+     Network.ReceiveQueue.Buffer:=BufferCreate(SizeOf(TNetworkEntry),PAX88XXXNetwork(Network).ReceiveEntryCount + 1);
      if Network.ReceiveQueue.Buffer = INVALID_HANDLE_VALUE then
       begin
        if NETWORK_LOG_ENABLED then NetworkLogError(Network,'AX88XXX: Failed to create receive queue buffer');
@@ -648,7 +648,7 @@ begin
      SetLength(Network.ReceiveQueue.Entries,PAX88XXXNetwork(Network).ReceiveEntryCount);
      
      {Allocate Transmit Queue Buffer}
-     Network.TransmitQueue.Buffer:=BufferCreate(SizeOf(TNetworkEntry),PAX88XXXNetwork(Network).TransmitEntryCount);
+     Network.TransmitQueue.Buffer:=BufferCreate(SizeOf(TNetworkEntry),PAX88XXXNetwork(Network).TransmitEntryCount + 1);
      if Network.TransmitQueue.Buffer = INVALID_HANDLE_VALUE then
       begin
        if USB_LOG_ENABLED then USBLogError(Device,'AX88XXX: Failed to create transmit queue buffer');
@@ -961,6 +961,12 @@ begin
  if MutexLock(Network.Lock) = ERROR_SUCCESS then
   begin
    try
+    {Cancel Interrupt Request}
+    USBRequestCancel(PAX88XXXNetwork(Network).InterruptRequest);
+
+    {Cancel Receive Request}
+    USBRequestCancel(PAX88XXXNetwork(Network).ReceiveRequest);
+
     {Check Pending}
     if PAX88XXXNetwork(Network).PendingCount <> 0 then
      begin
