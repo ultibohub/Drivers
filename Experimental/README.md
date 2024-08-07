@@ -8,3 +8,5 @@
 
 * HIDHoneywellScanner - Experimental HID keyboard driver for device 0C2E:1001 Honeywell Scanner 1950g.
 
+**Note: The above drivers are no longer required as Ultibo Core has full USB HID support that includes generic HID keyboard, mouse, touch and joystick drivers.**
+
